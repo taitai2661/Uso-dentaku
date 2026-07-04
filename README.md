@@ -2,5 +2,5 @@
 
 MIT Licenseつけとくから自由に使っていいよ
 
-どうぞー
+ここから使えるー
 https://uso-dentaku.pages.dev/
