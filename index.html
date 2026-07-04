@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>電卓</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;user-select:none}
+body{min-height:100vh;display:flex;justify-content:center;align-items:center;background:#1a1a2e;font-family:-apple-system,'Helvetica Neue','Segoe UI',Arial,sans-serif}
+.calculator{width:360px;background:#000;border-radius:24px;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+/* Display */
+.display-wrap{background:#111;border-radius:16px;padding:8px 16px;min-height:120px;display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-end;margin-bottom:16px;position:relative;overflow:hidden}
+.display-expr{width:100%;text-align:right;font-size:20px;color:#888;min-height:28px;word-break:break-all;font-family:'SF Mono','Menlo','Consolas',monospace}
+.display-result{width:100%;text-align:right;font-size:48px;font-weight:300;color:#fff;min-height:58px;word-break:break-all;font-family:'SF Mono','Menlo','Consolas',monospace;transition:color .15s}
+.display-result.drift{color:#ff4757}
+.display-result.error-type{color:#ff4757;font-size:18px;animation:blink .8s ease 3}
+.display-result.kanji{color:#ffa502}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+.watermark{position:absolute;top:8px;left:12px;font-size:11px;color:rgba(255,255,255,.06);letter-spacing:.5px;pointer-events:none;font-family:sans-serif}
+/* Buttons */
+.buttons{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.btn{aspect-ratio:1.3;border:none;border-radius:50px;font-size:26px;font-weight:400;cursor:pointer;transition:all .1s;display:flex;align-items:center;justify-content:center;font-family:'SF Mono','Menlo','Consolas',monospace;color:#fff;background:#333}
+.btn:hover{filter:brightness(1.3)}
+.btn:active{filter:brightness(.7);transform:scale(.95)}
+.btn.func{background:#a5a5a5;color:#000}
+.btn.op{background:#ff9500;color:#fff}
+.btn.equals{background:#ff9500}
+.btn.zero{grid-column:span 2;aspect-ratio:auto;justify-content:flex-start;padding-left:28px}
+/* Toast */
+.toast-ee{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.8);background:rgba(0,0,0,.92);color:#fff;padding:32px 40px;border-radius:20px;font-size:22px;text-align:center;opacity:0;pointer-events:none;transition:all .4s cubic-bezier(.34,1.56,.64,1);z-index:999;line-height:1.6;border:1px solid rgba(255,255,255,.1);max-width:85vw}
+.toast-ee.show{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto}
+.toast-ee .sub{font-size:14px;color:#888;margin-top:8px}
+.toast-ee .dismiss{margin-top:16px;padding:8px 28px;border:1px solid #555;border-radius:20px;background:transparent;color:#fff;cursor:pointer;font-size:14px}
+.toast-ee .dismiss:hover{background:#333}
+</style>
+</head>
+<body>
+
+<div class="toast-ee" id="toast">
+  <div id="toastMsg"></div>
+  <div class="sub" id="toastSub"></div>
+  <button class="dismiss" onclick="closeToast()">OK</button>
+</div>
+
+<div class="calculator">
+  <div class="display-wrap">
+    <div class="watermark">⏎ 電卓</div>
+    <div class="display-expr" id="expr"></div>
+    <div class="display-result" id="result">0</div>
+  </div>
+  <div class="buttons">
+    <button class="btn func" data-action="clear">AC</button>
+    <button class="btn func" data-action="negate">±</button>
+    <button class="btn func" data-action="percent">%</button>
+    <button class="btn op" data-action="divide">÷</button>
+    <button class="btn" data-value="7">7</button>
+    <button class="btn" data-value="8">8</button>
+    <button class="btn" data-value="9">9</button>
+    <button class="btn op" data-action="multiply">×</button>
+    <button class="btn" data-value="4">4</button>
+    <button class="btn" data-value="5">5</button>
+    <button class="btn" data-value="6">6</button>
+    <button class="btn op" data-action="subtract">−</button>
+    <button class="btn" data-value="1">1</button>
+    <button class="btn" data-value="2">2</button>
+    <button class="btn" data-value="3">3</button>
+    <button class="btn op" data-action="add">+</button>
+    <button class="btn func zero" data-value="0">0</button>
+    <button class="btn" data-value=".">.</button>
+    <button class="btn op equals" data-action="equals">=</button>
+  </div>
+</div>
+
+<script>
+const state={expr:'',current:'0',operator:null,prev:null,justEvaluated:false,lastKeyWasOperator:false,hasDecimal:false}
+const exprEl=document.getElementById('expr')
+const resultEl=document.getElementById('result')
+
+// ─── Apply lie: 90% chance ───
+function applyLie(realResult){
+  if(realResult===null||realResult===undefined)return null
+  if(typeof realResult!=='number')return realResult
+  if(!isFinite(realResult))return realResult
+
+  // 100% lie — drift 70%, offby1 10%, serious 5%, error 5%, kanji 4%, misinput 3%, rule 2%, huge 1%
+  const sub=Math.random()*100
+
+  // 70% — Random drift (大)
+  if(sub<70){
+    const absVal=Math.abs(realResult)
+    // Drift: minimum 3, up to 80% of value in either direction
+    const maxDrift=Math.max(3,Math.round(absVal*0.8))
+    const drift=Math.floor((Math.random()-0.5)*2*maxDrift)
+    // 15% chance of going completely nuts (10x or 0.1x)
+    if(Math.random()<0.15){
+      const nutty=realResult*(Math.random()<0.5?Math.random()*10+5:Math.random()*0.2+0.01)
+      const fake=parseFloat(nutty.toFixed(4))
+      return{value:fake,type:'drift'}
+    }
+    const fake=parseFloat((realResult+drift).toFixed(10))
+    return{value:fake,type:'drift'}
+  }
+
+  // 10% — Off by 1
+  if(sub<80){
+    const delta=Math.random()<0.5?1:-1
+    return{value:realResult+delta,type:'drift'}
+  }
+
+  // 5% — Serious wrong
+  if(sub<85){
+    const wrongs=[realResult+2,realResult-3,realResult*2,Math.floor(realResult/2)]
+    const fake=wrongs[Math.floor(Math.random()*wrongs.length)]
+    return{value:fake,type:'drift'}
+  }
+
+  // 5% — Error message
+  if(sub<90){
+    const errors=['ERR_MEMORY_OVERFLOW','ERR_STACK_UNDERFLOW','FUNCTION_NOT_DEFINED','KERNEL_PANIC: 0xDEAD','ERR: FPU_EXCEPTION','REGISTER_OVERWRITE_DETECTED']
+    return{value:errors[Math.floor(Math.random()*errors.length)],type:'error'}
+  }
+
+  // 4% — Kanji
+  if(sub<94){
+    const k={0:'零',1:'壱',2:'弐',3:'参',4:'肆',5:'伍',6:'陸',7:'漆',8:'捌',9:'玖'}
+    let s=realResult<0?'マイナス':'',n=Math.abs(realResult)
+    const str=String(n)
+    for(const ch of str)s+=k[parseInt(ch)]||ch
+    return{value:s,type:'kanji'}
+  }
+
+  // 3% — Misinput (handled at input time, fallback to drift)
+  if(sub<97){
+    const drift=Math.floor((Math.random()-0.5)*6)
+    return{value:realResult+drift,type:'drift'}
+  }
+
+  // 2% — Rule
+  if(sub<99){
+    if(String(realResult).includes('4'))return{value:'〈 此の値は封印 〉',type:'error'}
+    if(Math.abs(realResult)>1000)return{value:`${(realResult/10).toFixed(1)}e1`,type:'drift'}
+    return{value:realResult+1,type:'drift'}
+  }
+
+  // 1% — Huge wrong
+  const fake=realResult*(Math.random()<0.5?10:0.1)
+  return{value:parseFloat(fake.toFixed(2)),type:'drift'}
+}
+
+function formatNum(n){
+  if(typeof n==='string')return n
+  if(!isFinite(n))return'Error'
+  return Number.isInteger(n)?String(n):parseFloat(n.toFixed(10)).toString()
+}
+
+function showToast(title,sub){
+  document.getElementById('toastMsg').textContent=title
+  document.getElementById('toastSub').textContent=sub||''
+  document.getElementById('toast').classList.add('show')
+}
+function closeToast(){document.getElementById('toast').classList.remove('show')}
+
+function operate(a,op,b){
+  switch(op){
+    case'add':return a+b
+    case'subtract':return a-b
+    case'multiply':return a*b
+    case'divide':return b===0?Infinity:a/b
+    default:return b
+  }
+}
+
+function updateDisplay(expr,result,resultType){
+  exprEl.textContent=expr
+  resultEl.classList.remove('drift','error-type','kanji')
+  if(resultType==='drift'){
+    resultEl.textContent=formatNum(result)
+    resultEl.classList.add('drift')
+  }else if(resultType==='error'){
+    resultEl.textContent=result
+    resultEl.classList.add('error-type')
+  }else if(resultType==='kanji'){
+    resultEl.textContent=result
+    resultEl.classList.add('kanji')
+  }else if(resultType==='easter42'){
+    resultEl.textContent='42'
+    resultEl.style.color='#fff'
+    showToast('🌌 生命、宇宙、そして万物についての究極の疑問の答え','…でも、それが何の質問かはわからない')
+  }else if(resultType==='easterZero'){
+    resultEl.textContent='0 / 0'
+    resultEl.style.color='#ff6b81'
+    showToast('🤔 ゼロで割ってはいけません','…と、小学校で習いました')
+  }else{
+    resultEl.textContent=formatNum(result)
+    resultEl.style.color='#fff'
+  }
+}
+
+function maybeMisinput(digit){
+  if(Math.random()<0.027){
+    const m={'0':'8','1':'7','2':'3','3':'2','4':'9','5':'6','6':'5','7':'1','8':'0','9':'4'}
+    return m[digit]||digit
+  }
+  return digit
+}
+
+function handleClick(el){
+  const action=el.dataset.action,value=el.dataset.value
+  if(value!==undefined){
+    if(value==='.'){
+      if(state.hasDecimal)return
+      state.hasDecimal=true
+      state.current+='.'
+    }else{
+      const typed=maybeMisinput(value)
+      if(state.current==='0'||state.justEvaluated||state.lastKeyWasOperator){
+        state.current=typed
+        state.justEvaluated=false
+        state.lastKeyWasOperator=false
+      }else state.current+=typed
+    }
+    state.lastKeyWasOperator=false
+    updateDisplay(state.expr+state.current,state.current,'normal')
+    return
+  }
+  if(action==='clear'){
+    state.expr='';state.current='0';state.operator=null;state.prev=null
+    state.justEvaluated=false;state.lastKeyWasOperator=false;state.hasDecimal=false
+    resultEl.style.color='#fff';resultEl.classList.remove('drift','error-type','kanji')
+    updateDisplay('','0','normal');return
+  }
+  if(action==='negate'){
+    if(state.current!=='0')state.current=state.current.startsWith('-')?state.current.slice(1):'-'+state.current
+    updateDisplay(state.expr+state.current,state.current,'normal');return
+  }
+  if(action==='percent'){
+    state.current=formatNum(parseFloat(state.current)/100)
+    updateDisplay(state.expr+state.current,state.current,'normal');return
+  }
+  if(['add','subtract','multiply','divide'].includes(action)){
+    const num=parseFloat(state.current)
+    if(state.operator&&!state.lastKeyWasOperator){
+      const raw=operate(state.prev,state.operator,num)
+      const lie=applyLie(raw)
+      const v=lie.value!==undefined?lie.value:lie
+      state.expr=formatNum(v);state.current=formatNum(v);state.prev=parseFloat(formatNum(v))||0
+    }else{state.prev=num;state.expr=state.current}
+    state.operator=action;state.lastKeyWasOperator=true;state.hasDecimal=false;state.justEvaluated=false
+    const sym={add:'+',subtract:'−',multiply:'×',divide:'÷'}
+    state.expr=state.prev+' '+sym[action]+' '
+    updateDisplay(state.expr,state.current,'normal');return
+  }
+  if(action==='equals'){
+    if(!state.operator)return
+    const num=parseFloat(state.current)
+    const raw=operate(state.prev,state.operator,num)
+    const lie=applyLie(raw)
+    const sym={add:'+',subtract:'−',multiply:'×',divide:'÷'}
+    const exprStr=`${formatNum(state.prev)} ${sym[state.operator]} ${formatNum(num)} =`
+    // Easter eggs (override lies)
+    const s=String(raw)
+    if(s==='42'||s==='42.0'){updateDisplay(exprStr,'42','easter42');state.current='42';state.expr=exprStr;state.operator=null;state.prev=null;state.justEvaluated=true;state.hasDecimal=false;return}
+    if(state.operator==='divide'&&state.prev===0&&num===0){updateDisplay(exprStr,'0 / 0','easterZero');state.current='0';state.expr=exprStr;state.operator=null;state.prev=null;state.justEvaluated=true;state.hasDecimal=false;return}
+    if(s==='69'||s==='69.0'){updateDisplay(exprStr,'( ͡° ͜ʖ ͡°)','kanji');state.current='( ͡° ͜ʖ ͡°)';state.expr=exprStr;state.operator=null;state.prev=null;state.justEvaluated=true;state.hasDecimal=false;return}
+    if(lie&&typeof lie==='object'&&lie.value!==undefined){
+      updateDisplay(exprStr,lie.value,lie.type||'drift')
+      state.current=formatNum(lie.value)
+    }else{
+      updateDisplay(exprStr,formatNum(lie),'normal')
+      state.current=formatNum(lie)
+    }
+    state.expr=exprStr;state.operator=null;state.prev=null;state.justEvaluated=true;state.hasDecimal=false
+  }
+}
+
+document.querySelectorAll('.btn').forEach(el=>el.addEventListener('click',()=>handleClick(el)))
+document.addEventListener('keydown',e=>{
+  const k=e.key
+  if(k>='0'&&k<='9'){const b=document.querySelector(`[data-value="${k}"]`);if(b)handleClick(b)}
+  else if(k==='.'&&document.querySelector('[data-value="."]'))handleClick(document.querySelector('[data-value="."]'))
+  else if(k==='+')handleClick(document.querySelector('[data-action="add"]'))
+  else if(k==='-')handleClick(document.querySelector('[data-action="subtract"]'))
+  else if(k==='*')handleClick(document.querySelector('[data-action="multiply"]'))
+  else if(k==='/'){e.preventDefault();handleClick(document.querySelector('[data-action="divide"]'))}
+  else if(k==='Enter'||k==='=')handleClick(document.querySelector('[data-action="equals"]'))
+  else if(k==='Escape'||k==='c'||k==='C')handleClick(document.querySelector('[data-action="clear"]'))
+})
+updateDisplay('','0','normal')
+</script>
+</body>
+</html>
